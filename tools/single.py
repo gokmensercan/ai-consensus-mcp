@@ -2,8 +2,7 @@
 
 from typing import Annotated
 
-from mcp.server.fastmcp import Context
-from mcp.types import ToolAnnotations
+from fastmcp import Context
 from pydantic import Field
 
 from providers import call_gemini, call_codex
@@ -11,10 +10,10 @@ from providers import call_gemini, call_codex
 
 async def safe_log(ctx: Context | None, message: str) -> None:
     """Safely log a message if context is available."""
-    if ctx:
+    if ctx and ctx.request_context is not None:
         try:
             await ctx.info(message)
-        except (ValueError, AttributeError):
+        except (ValueError, AttributeError, RuntimeError):
             pass  # Context not available outside request
 
 
@@ -22,10 +21,10 @@ def register_single_tools(mcp):
     """Register single-AI query tools to the MCP server"""
 
     @mcp.tool(
-        annotations=ToolAnnotations(
-            readOnlyHint=True,
-            openWorldHint=True,
-        ),
+        annotations={
+            "readOnlyHint": True,
+            "openWorldHint": True,
+        },
     )
     async def ask_gemini(
         prompt: Annotated[str, Field(description="The prompt to send to Gemini AI")],
@@ -49,10 +48,10 @@ def register_single_tools(mcp):
             return f"Error: {result.error}"
 
     @mcp.tool(
-        annotations=ToolAnnotations(
-            readOnlyHint=True,
-            openWorldHint=True,
-        ),
+        annotations={
+            "readOnlyHint": True,
+            "openWorldHint": True,
+        },
     )
     async def ask_codex(
         prompt: Annotated[str, Field(description="The prompt to send to Codex AI")],

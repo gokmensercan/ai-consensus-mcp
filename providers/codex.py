@@ -3,8 +3,7 @@
 import asyncio
 from typing import Annotated
 
-from mcp.server.fastmcp import FastMCP, Context
-from mcp.types import ToolAnnotations
+from fastmcp import FastMCP, Context
 from pydantic import Field
 
 from models import AIResponse
@@ -21,10 +20,10 @@ class CodexError(Exception):
 
 async def safe_log(ctx: Context | None, message: str) -> None:
     """Safely log a message if context is available."""
-    if ctx:
+    if ctx and ctx.request_context is not None:
         try:
             await ctx.info(message)
-        except (ValueError, AttributeError):
+        except (ValueError, AttributeError, RuntimeError):
             pass  # Context not available outside request
 
 
@@ -80,10 +79,10 @@ async def call_codex(prompt: str, ctx: Context | None = None) -> AIResponse:
 
 
 @codex_mcp.tool(
-    annotations=ToolAnnotations(
-        readOnlyHint=True,
-        openWorldHint=True,
-    ),
+    annotations={
+        "readOnlyHint": True,
+        "openWorldHint": True,
+    },
 )
 async def ask_codex(
     prompt: Annotated[str, Field(description="The prompt to send to Codex AI")],

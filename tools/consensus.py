@@ -3,8 +3,7 @@
 import asyncio
 from typing import Annotated
 
-from mcp.server.fastmcp import Context
-from mcp.types import ToolAnnotations
+from fastmcp import Context
 from pydantic import Field
 
 from providers import call_gemini, call_codex
@@ -13,19 +12,19 @@ from models import AIResponse, ConsensusResult, SynthesisResult
 
 async def safe_log(ctx: Context | None, message: str) -> None:
     """Safely log a message if context is available."""
-    if ctx:
+    if ctx and ctx.request_context is not None:
         try:
             await ctx.info(message)
-        except (ValueError, AttributeError):
+        except (ValueError, AttributeError, RuntimeError):
             pass  # Context not available outside request
 
 
 async def safe_progress(ctx: Context | None, progress: int, total: int = 100) -> None:
     """Safely report progress if context is available."""
-    if ctx:
+    if ctx and ctx.request_context is not None:
         try:
             await ctx.report_progress(progress=progress, total=total)
-        except (ValueError, AttributeError):
+        except (ValueError, AttributeError, RuntimeError):
             pass  # Context not available outside request
 
 
@@ -33,10 +32,10 @@ def register_consensus_tools(mcp):
     """Register consensus tools to the MCP server"""
 
     @mcp.tool(
-        annotations=ToolAnnotations(
-            readOnlyHint=True,
-            openWorldHint=True,
-        ),
+        annotations={
+            "readOnlyHint": True,
+            "openWorldHint": True,
+        },
     )
     async def consensus(
         prompt: Annotated[str, Field(description="The question to ask both AIs")],
@@ -90,10 +89,10 @@ def register_consensus_tools(mcp):
         return result.format_markdown()
 
     @mcp.tool(
-        annotations=ToolAnnotations(
-            readOnlyHint=True,
-            openWorldHint=True,
-        ),
+        annotations={
+            "readOnlyHint": True,
+            "openWorldHint": True,
+        },
     )
     async def consensus_with_synthesis(
         prompt: Annotated[str, Field(description="The question to ask both AIs")],

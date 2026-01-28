@@ -23,7 +23,7 @@ from pathlib import Path
 # Add project root to path for imports
 sys.path.insert(0, str(Path(__file__).parent))
 
-from mcp.server.fastmcp import FastMCP
+from fastmcp import FastMCP
 from tools import register_single_tools, register_consensus_tools
 
 # Create MCP server
