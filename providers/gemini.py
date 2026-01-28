@@ -4,9 +4,13 @@ import asyncio
 from typing import Annotated
 
 from fastmcp import FastMCP, Context
+from fastmcp.exceptions import ToolError
+from fastmcp.server.dependencies import CurrentContext
 from pydantic import Field
 
+from config import settings
 from models import AIResponse
+from utils import safe_log
 
 # Mini MCP server for Gemini provider (can be mounted)
 gemini_mcp = FastMCP("gemini-provider")
@@ -16,15 +20,6 @@ class GeminiError(Exception):
     """Gemini-specific error"""
 
     pass
-
-
-async def safe_log(ctx: Context | None, message: str) -> None:
-    """Safely log a message if context is available."""
-    if ctx and ctx.request_context is not None:
-        try:
-            await ctx.info(message)
-        except (ValueError, AttributeError, RuntimeError):
-            pass  # Context not available outside request
 
 
 async def call_gemini(
@@ -52,9 +47,9 @@ async def call_gemini(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            cwd="/tmp",
+            cwd=settings.GEMINI_CWD,
         )
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
+        stdout, stderr = await proc.communicate()
         output = stdout.decode("utf-8").strip()
 
         if not output and stderr:
@@ -67,13 +62,6 @@ async def call_gemini(
             provider="gemini", response=output or "(empty)", success=True
         )
 
-    except asyncio.TimeoutError:
-        return AIResponse(
-            provider="gemini",
-            response="",
-            success=False,
-            error="Timeout (120s)",
-        )
     except FileNotFoundError:
         return AIResponse(
             provider="gemini",
@@ -92,13 +80,14 @@ async def call_gemini(
         "readOnlyHint": True,
         "openWorldHint": True,
     },
+    tags=["provider", "gemini", "ai"],
 )
 async def ask_gemini(
     prompt: Annotated[str, Field(description="The prompt to send to Gemini AI")],
     model: Annotated[
         str | None, Field(description="Optional Gemini model (e.g., gemini-2.0-flash)")
     ] = None,
-    ctx: Context = None,
+    ctx: Context = CurrentContext(),
 ) -> str:
     """
     Ask Gemini AI a question using local Gemini CLI.
@@ -111,4 +100,4 @@ async def ask_gemini(
     if result.success:
         return result.response
     else:
-        return f"Error: {result.error}"
+        raise ToolError(f"Gemini error: {result.error}")

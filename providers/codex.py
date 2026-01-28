@@ -4,9 +4,13 @@ import asyncio
 from typing import Annotated
 
 from fastmcp import FastMCP, Context
+from fastmcp.exceptions import ToolError
+from fastmcp.server.dependencies import CurrentContext
 from pydantic import Field
 
+from config import settings
 from models import AIResponse
+from utils import safe_log
 
 # Mini MCP server for Codex provider (can be mounted)
 codex_mcp = FastMCP("codex-provider")
@@ -16,15 +20,6 @@ class CodexError(Exception):
     """Codex-specific error"""
 
     pass
-
-
-async def safe_log(ctx: Context | None, message: str) -> None:
-    """Safely log a message if context is available."""
-    if ctx and ctx.request_context is not None:
-        try:
-            await ctx.info(message)
-        except (ValueError, AttributeError, RuntimeError):
-            pass  # Context not available outside request
 
 
 async def call_codex(prompt: str, ctx: Context | None = None) -> AIResponse:
@@ -38,7 +33,7 @@ async def call_codex(prompt: str, ctx: Context | None = None) -> AIResponse:
     Returns:
         AIResponse with the result
     """
-    cmd = ["codex", "exec", "--skip-git-repo-check", prompt]
+    cmd = ["codex", "exec", prompt]
 
     await safe_log(ctx, "Calling Codex CLI...")
 
@@ -47,9 +42,9 @@ async def call_codex(prompt: str, ctx: Context | None = None) -> AIResponse:
             *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            cwd="/tmp",
+            cwd=settings.CODEX_CWD,
         )
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
+        stdout, stderr = await proc.communicate()
         output = stdout.decode("utf-8").strip()
 
         if not output and stderr:
@@ -60,13 +55,6 @@ async def call_codex(prompt: str, ctx: Context | None = None) -> AIResponse:
 
         return AIResponse(provider="codex", response=output or "(empty)", success=True)
 
-    except asyncio.TimeoutError:
-        return AIResponse(
-            provider="codex",
-            response="",
-            success=False,
-            error="Timeout (120s)",
-        )
     except FileNotFoundError:
         return AIResponse(
             provider="codex",
@@ -83,10 +71,11 @@ async def call_codex(prompt: str, ctx: Context | None = None) -> AIResponse:
         "readOnlyHint": True,
         "openWorldHint": True,
     },
+    tags=["provider", "codex", "ai"],
 )
 async def ask_codex(
     prompt: Annotated[str, Field(description="The prompt to send to Codex AI")],
-    ctx: Context = None,
+    ctx: Context = CurrentContext(),
 ) -> str:
     """
     Ask Codex AI a question using local Codex CLI.
@@ -99,4 +88,4 @@ async def ask_codex(
     if result.success:
         return result.response
     else:
-        return f"Error: {result.error}"
+        raise ToolError(f"Codex error: {result.error}")

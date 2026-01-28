@@ -3,18 +3,12 @@
 from typing import Annotated
 
 from fastmcp import Context
+from fastmcp.exceptions import ToolError
+from fastmcp.server.dependencies import CurrentContext
 from pydantic import Field
 
 from providers import call_gemini, call_codex
-
-
-async def safe_log(ctx: Context | None, message: str) -> None:
-    """Safely log a message if context is available."""
-    if ctx and ctx.request_context is not None:
-        try:
-            await ctx.info(message)
-        except (ValueError, AttributeError, RuntimeError):
-            pass  # Context not available outside request
+from utils import safe_log
 
 
 def register_single_tools(mcp):
@@ -25,6 +19,7 @@ def register_single_tools(mcp):
             "readOnlyHint": True,
             "openWorldHint": True,
         },
+        tags=["provider", "gemini", "ai", "single"],
     )
     async def ask_gemini(
         prompt: Annotated[str, Field(description="The prompt to send to Gemini AI")],
@@ -32,7 +27,7 @@ def register_single_tools(mcp):
             str | None,
             Field(description="Optional Gemini model (e.g., gemini-2.0-flash)"),
         ] = None,
-        ctx: Context = None,
+        ctx: Context = CurrentContext(),
     ) -> str:
         """
         Ask Gemini AI a question using local Gemini CLI.
@@ -45,17 +40,18 @@ def register_single_tools(mcp):
         if result.success:
             return result.response
         else:
-            return f"Error: {result.error}"
+            raise ToolError(f"Gemini error: {result.error}")
 
     @mcp.tool(
         annotations={
             "readOnlyHint": True,
             "openWorldHint": True,
         },
+        tags=["provider", "codex", "ai", "single"],
     )
     async def ask_codex(
         prompt: Annotated[str, Field(description="The prompt to send to Codex AI")],
-        ctx: Context = None,
+        ctx: Context = CurrentContext(),
     ) -> str:
         """
         Ask Codex AI a question using local Codex CLI.
@@ -68,4 +64,4 @@ def register_single_tools(mcp):
         if result.success:
             return result.response
         else:
-            return f"Error: {result.error}"
+            raise ToolError(f"Codex error: {result.error}")

@@ -4,28 +4,12 @@ import asyncio
 from typing import Annotated
 
 from fastmcp import Context
+from fastmcp.server.dependencies import CurrentContext
 from pydantic import Field
 
 from providers import call_gemini, call_codex
 from models import AIResponse, ConsensusResult, SynthesisResult
-
-
-async def safe_log(ctx: Context | None, message: str) -> None:
-    """Safely log a message if context is available."""
-    if ctx and ctx.request_context is not None:
-        try:
-            await ctx.info(message)
-        except (ValueError, AttributeError, RuntimeError):
-            pass  # Context not available outside request
-
-
-async def safe_progress(ctx: Context | None, progress: int, total: int = 100) -> None:
-    """Safely report progress if context is available."""
-    if ctx and ctx.request_context is not None:
-        try:
-            await ctx.report_progress(progress=progress, total=total)
-        except (ValueError, AttributeError, RuntimeError):
-            pass  # Context not available outside request
+from utils import safe_log, safe_progress
 
 
 def register_consensus_tools(mcp):
@@ -36,6 +20,7 @@ def register_consensus_tools(mcp):
             "readOnlyHint": True,
             "openWorldHint": True,
         },
+        tags=["consensus", "parallel", "ai"],
     )
     async def consensus(
         prompt: Annotated[str, Field(description="The question to ask both AIs")],
@@ -43,7 +28,7 @@ def register_consensus_tools(mcp):
             str | None,
             Field(description="Optional Gemini model (e.g., gemini-2.0-flash)"),
         ] = None,
-        ctx: Context = None,
+        ctx: Context = CurrentContext(),
     ) -> str:
         """
         Ask both Gemini and Codex the same question in PARALLEL.
@@ -93,6 +78,7 @@ def register_consensus_tools(mcp):
             "readOnlyHint": True,
             "openWorldHint": True,
         },
+        tags=["consensus", "parallel", "ai", "synthesis"],
     )
     async def consensus_with_synthesis(
         prompt: Annotated[str, Field(description="The question to ask both AIs")],
@@ -100,7 +86,7 @@ def register_consensus_tools(mcp):
             str | None,
             Field(description="Optional Gemini model (e.g., gemini-2.0-flash)"),
         ] = None,
-        ctx: Context = None,
+        ctx: Context = CurrentContext(),
     ) -> str:
         """
         Ask both Gemini and Codex in PARALLEL, then synthesize responses.
