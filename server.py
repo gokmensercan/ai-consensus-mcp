@@ -5,6 +5,11 @@ AI Consensus MCP Server
 A Model Context Protocol server that provides parallel AI queries
 using Gemini CLI and Codex CLI.
 
+Features:
+    - Context logging and progress reporting
+    - Structured Pydantic output models
+    - Tool annotations for better MCP integration
+
 Tools:
     - ask_gemini: Query Gemini AI
     - ask_codex: Query Codex AI
