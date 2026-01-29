@@ -45,9 +45,7 @@ Ortam değişkenleri ile yapılandırma:
 
 | Değişken | Varsayılan | Açıklama |
 |----------|------------|----------|
-| `GEMINI_CWD` | `/tmp` | Gemini CLI çalışma dizini |
 | `GEMINI_DEFAULT_MODEL` | - | Varsayılan Gemini modeli (örn: `gemini-2.0-flash`) |
-| `CODEX_CWD` | `/tmp/codex-workspace` | Codex CLI çalışma dizini |
 | `MCP_LOG_LEVEL` | `INFO` | Log seviyesi |
 | `MCP_MASK_ERRORS` | `false` | Hata detaylarını maskele |
 

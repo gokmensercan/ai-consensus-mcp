@@ -8,7 +8,6 @@ from fastmcp.exceptions import ToolError
 from fastmcp.server.dependencies import CurrentContext
 from pydantic import Field
 
-from config import settings
 from models import AIResponse
 from utils import safe_log
 
@@ -42,7 +41,6 @@ async def call_codex(prompt: str, ctx: Context | None = None) -> AIResponse:
             *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            cwd=settings.CODEX_CWD,
         )
         stdout, stderr = await proc.communicate()
         output = stdout.decode("utf-8").strip()
@@ -55,12 +53,12 @@ async def call_codex(prompt: str, ctx: Context | None = None) -> AIResponse:
 
         return AIResponse(provider="codex", response=output or "(empty)", success=True)
 
-    except FileNotFoundError:
+    except FileNotFoundError as e:
         return AIResponse(
             provider="codex",
             response="",
             success=False,
-            error="codex command not found",
+            error=f"codex command not found: {e}",
         )
     except Exception as e:
         return AIResponse(provider="codex", response="", success=False, error=str(e))
