@@ -4,23 +4,30 @@ Hybrid approach: Uses file-based cache for persistence across MCP sessions,
 and optionally MCP session state when available.
 """
 
+import asyncio
 import hashlib
 import json
+import os
+import tempfile
 from pathlib import Path
 from typing import Optional
 
 from fastmcp import Context
-from models import ConsensusResult, SynthesisResult
+from models import ConsensusResult, SynthesisResult, CouncilResult
 
 
 # File-based cache directory
 CACHE_DIR = Path.home() / ".cache" / "ai-consensus-mcp"
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
+# Lock for serialising file writes (prevents race conditions on history.json)
+_file_lock = asyncio.Lock()
 
-def get_cache_key(prompt: str) -> str:
-    """Generate a cache key from prompt"""
-    return f"consensus_{hashlib.md5(prompt.encode()).hexdigest()[:12]}"
+
+def get_cache_key(prompt: str, model: str | None = None) -> str:
+    """Generate a cache key from prompt and optional model."""
+    source = f"{model}:{prompt}" if model else prompt
+    return f"consensus_{hashlib.md5(source.encode()).hexdigest()[:12]}"
 
 
 def _get_cache_file(key: str) -> Path:
@@ -33,34 +40,54 @@ def _get_history_file() -> Path:
     return CACHE_DIR / "history.json"
 
 
+def _atomic_write(path: Path, content: str) -> None:
+    """Write content to *path* atomically via temp-file + os.replace."""
+    fd, tmp_path = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(content)
+        os.replace(tmp_path, path)
+    except BaseException:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+
+
 async def cache_consensus_result(
-    ctx: Optional[Context], prompt: str, result: ConsensusResult | SynthesisResult
+    ctx: Optional[Context],
+    prompt: str,
+    result: ConsensusResult | SynthesisResult | CouncilResult,
+    model: str | None = None,
 ) -> None:
     """Cache consensus result in file-based cache and optionally session state"""
-    key = get_cache_key(prompt)
+    key = get_cache_key(prompt, model)
     data = result.model_dump()
 
-    # File-based cache (always works)
-    cache_file = _get_cache_file(key)
-    cache_file.write_text(json.dumps(data, default=str))
+    async with _file_lock:
+        # File-based cache (always works)
+        cache_file = _get_cache_file(key)
+        _atomic_write(cache_file, json.dumps(data, default=str))
 
-    # Update history
-    history_file = _get_history_file()
-    history = []
-    if history_file.exists():
-        try:
-            history = json.loads(history_file.read_text())
-        except json.JSONDecodeError:
-            history = []
+        # Update history
+        history_file = _get_history_file()
+        history = []
+        if history_file.exists():
+            try:
+                history = json.loads(history_file.read_text())
+            except json.JSONDecodeError:
+                history = []
 
-    history.append({
-        "prompt": prompt,
-        "key": key,
-        "timestamp": result.timestamp,
-        "type": "synthesis" if isinstance(result, SynthesisResult) else "consensus"
-    })
-    # Keep last 10 queries
-    history_file.write_text(json.dumps(history[-10:], default=str))
+        history.append({
+            "prompt": prompt,
+            "key": key,
+            "timestamp": result.timestamp,
+            "model": model,
+            "type": "council" if isinstance(result, CouncilResult) else "synthesis" if isinstance(result, SynthesisResult) else "consensus",
+        })
+        # Keep last 10 queries
+        _atomic_write(history_file, json.dumps(history[-10:], default=str))
 
     # Also try MCP session state if context available
     if ctx:
@@ -72,10 +99,12 @@ async def cache_consensus_result(
 
 
 async def get_cached_result(
-    ctx: Optional[Context], prompt: str
-) -> ConsensusResult | SynthesisResult | None:
+    ctx: Optional[Context],
+    prompt: str,
+    model: str | None = None,
+) -> ConsensusResult | SynthesisResult | CouncilResult | None:
     """Get cached result from file cache or session state"""
-    key = get_cache_key(prompt)
+    key = get_cache_key(prompt, model)
     data = None
 
     # Try MCP session state first (faster if available)
@@ -98,6 +127,8 @@ async def get_cached_result(
         return None
 
     # Determine type and reconstruct
+    if "chairman_synthesis" in data:
+        return CouncilResult.model_validate(data)
     if "synthesis" in data:
         return SynthesisResult.model_validate(data)
     return ConsensusResult.model_validate(data)

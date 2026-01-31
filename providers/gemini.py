@@ -1,6 +1,5 @@
 """Gemini CLI provider with FastMCP integration"""
 
-import asyncio
 from typing import Annotated
 
 from fastmcp import FastMCP, Context
@@ -10,15 +9,10 @@ from pydantic import Field
 
 from models import AIResponse
 from utils import safe_log
+from .subprocess_runner import run_cli_subprocess
 
 # Mini MCP server for Gemini provider (can be mounted)
 gemini_mcp = FastMCP("gemini-provider")
-
-
-class GeminiError(Exception):
-    """Gemini-specific error"""
-
-    pass
 
 
 async def call_gemini(
@@ -39,38 +33,7 @@ async def call_gemini(
     if model:
         cmd.extend(["-m", model])
 
-    await safe_log(ctx, "Calling Gemini CLI...")
-
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await proc.communicate()
-        output = stdout.decode("utf-8").strip()
-
-        if not output and stderr:
-            error_msg = stderr.decode("utf-8").strip()
-            return AIResponse(
-                provider="gemini", response="", success=False, error=error_msg
-            )
-
-        return AIResponse(
-            provider="gemini", response=output or "(empty)", success=True
-        )
-
-    except FileNotFoundError as e:
-        return AIResponse(
-            provider="gemini",
-            response="",
-            success=False,
-            error=f"gemini command not found: {e}",
-        )
-    except Exception as e:
-        return AIResponse(
-            provider="gemini", response="", success=False, error=str(e)
-        )
+    return await run_cli_subprocess(cmd, "gemini", ctx)
 
 
 @gemini_mcp.tool(

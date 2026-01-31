@@ -7,7 +7,7 @@ from fastmcp.exceptions import ToolError
 from fastmcp.server.dependencies import CurrentContext
 from pydantic import Field
 
-from providers import call_gemini, call_codex
+from providers import call_gemini, call_codex, call_copilot
 from utils import safe_log
 
 
@@ -65,3 +65,27 @@ def register_single_tools(mcp):
             return result.response
         else:
             raise ToolError(f"Codex error: {result.error}")
+
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": True,
+            "openWorldHint": True,
+        },
+        tags=["provider", "copilot", "ai", "single"],
+    )
+    async def ask_copilot(
+        prompt: Annotated[str, Field(description="The prompt to send to Copilot AI")],
+        ctx: Context = CurrentContext(),
+    ) -> str:
+        """
+        Ask Copilot AI a question using local Copilot CLI.
+        Returns the AI's response or an error message.
+        """
+        await safe_log(ctx, f"Processing Copilot query: {prompt[:50]}...")
+
+        result = await call_copilot(prompt, ctx)
+
+        if result.success:
+            return result.response
+        else:
+            raise ToolError(f"Copilot error: {result.error}")

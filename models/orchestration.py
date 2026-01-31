@@ -12,6 +12,7 @@ class AgentType(str, Enum):
 
     GEMINI = "gemini"
     CODEX = "codex"
+    COPILOT = "copilot"
 
 
 class AgentCapability(str, Enum):

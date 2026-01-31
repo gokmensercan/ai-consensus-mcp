@@ -4,7 +4,7 @@ from typing import Annotated
 
 from pydantic import Field
 
-from agents import CodexWorkerAgent, GeminiWorkerAgent, get_registry
+from agents import CodexWorkerAgent, CopilotWorkerAgent, GeminiWorkerAgent, get_registry
 from models.orchestration import OrchestrationContext, TaskStatus
 from orchestration import get_inbox, get_supervisor, get_task_store, init_db
 
@@ -23,6 +23,7 @@ async def _ensure_setup() -> None:
     if not await registry.list_agents():
         await registry.register(GeminiWorkerAgent())
         await registry.register(CodexWorkerAgent())
+        await registry.register(CopilotWorkerAgent())
     _setup_done = True
 
 

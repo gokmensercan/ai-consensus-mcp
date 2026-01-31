@@ -49,6 +49,7 @@ inbox_summary(agent_name="gemini-worker")
 |-------|------|-------------|
 | `gemini-worker` | Gemini CLI | General QA, Code Generation, Synthesis |
 | `codex-worker` | Codex CLI | General QA, Code Generation, Code Review |
+| `copilot-worker` | Copilot CLI | General QA, Code Generation, Code Review |
 
 ## Management
 

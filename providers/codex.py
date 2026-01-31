@@ -1,6 +1,5 @@
 """Codex CLI provider with FastMCP integration"""
 
-import asyncio
 from typing import Annotated
 
 from fastmcp import FastMCP, Context
@@ -10,15 +9,10 @@ from pydantic import Field
 
 from models import AIResponse
 from utils import safe_log
+from .subprocess_runner import run_cli_subprocess
 
 # Mini MCP server for Codex provider (can be mounted)
 codex_mcp = FastMCP("codex-provider")
-
-
-class CodexError(Exception):
-    """Codex-specific error"""
-
-    pass
 
 
 async def call_codex(prompt: str, ctx: Context | None = None) -> AIResponse:
@@ -34,34 +28,7 @@ async def call_codex(prompt: str, ctx: Context | None = None) -> AIResponse:
     """
     cmd = ["codex", "exec", prompt]
 
-    await safe_log(ctx, "Calling Codex CLI...")
-
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await proc.communicate()
-        output = stdout.decode("utf-8").strip()
-
-        if not output and stderr:
-            error_msg = stderr.decode("utf-8").strip()
-            return AIResponse(
-                provider="codex", response="", success=False, error=error_msg
-            )
-
-        return AIResponse(provider="codex", response=output or "(empty)", success=True)
-
-    except FileNotFoundError as e:
-        return AIResponse(
-            provider="codex",
-            response="",
-            success=False,
-            error=f"codex command not found: {e}",
-        )
-    except Exception as e:
-        return AIResponse(provider="codex", response="", success=False, error=str(e))
+    return await run_cli_subprocess(cmd, "codex", ctx)
 
 
 @codex_mcp.tool(

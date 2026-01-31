@@ -7,8 +7,8 @@ from fastmcp import Context
 from fastmcp.server.dependencies import CurrentContext
 from pydantic import Field
 
-from providers import call_gemini, call_codex
-from models import AIResponse, ConsensusResult, SynthesisResult
+from providers import call_gemini, call_codex, call_copilot
+from models import AIResponse, ConsensusResult, SynthesisResult, CouncilResult
 from utils import (
     safe_log,
     safe_progress,
@@ -43,8 +43,8 @@ def register_consensus_tools(mcp):
         ctx: Context = CurrentContext(),
     ) -> str:
         """
-        Ask both Gemini and Codex the same question in PARALLEL.
-        Returns both responses for comparison with structured output.
+        Ask Gemini, Codex, and Copilot the same question in PARALLEL.
+        Returns all responses for comparison with structured output.
         Results are cached in session state for quick retrieval.
         """
         await safe_log(ctx, f"Starting consensus query: {prompt[:50]}...")
@@ -52,7 +52,7 @@ def register_consensus_tools(mcp):
 
         # Check cache first
         if use_cache:
-            cached = await get_cached_result(ctx, prompt)
+            cached = await get_cached_result(ctx, prompt, model=gemini_model)
             if cached and isinstance(cached, ConsensusResult):
                 await safe_log(ctx, "Returning cached result")
                 await safe_progress(ctx, 100)
@@ -60,14 +60,15 @@ def register_consensus_tools(mcp):
 
         await safe_progress(ctx, 5)
 
-        # Run both in parallel
+        # Run all three in parallel
         gemini_task = asyncio.create_task(call_gemini(prompt, gemini_model, ctx))
         codex_task = asyncio.create_task(call_codex(prompt, ctx))
+        copilot_task = asyncio.create_task(call_copilot(prompt, ctx))
 
         await safe_progress(ctx, 10)
 
-        gemini_response, codex_response = await asyncio.gather(
-            gemini_task, codex_task, return_exceptions=True
+        gemini_response, codex_response, copilot_response = await asyncio.gather(
+            gemini_task, codex_task, copilot_task, return_exceptions=True
         )
 
         await safe_progress(ctx, 90)
@@ -87,12 +88,23 @@ def register_consensus_tools(mcp):
                 success=False,
                 error=str(codex_response),
             )
+        if isinstance(copilot_response, Exception):
+            copilot_response = AIResponse(
+                provider="copilot",
+                response="",
+                success=False,
+                error=str(copilot_response),
+            )
 
         # Create structured result
-        result = ConsensusResult(gemini=gemini_response, codex=codex_response)
+        result = ConsensusResult(
+            gemini=gemini_response,
+            codex=codex_response,
+            copilot=copilot_response,
+        )
 
         # Cache the result
-        await cache_consensus_result(ctx, prompt, result)
+        await cache_consensus_result(ctx, prompt, result, model=gemini_model)
 
         await safe_progress(ctx, 100)
         await safe_log(ctx, "Consensus query completed and cached")
@@ -120,7 +132,7 @@ def register_consensus_tools(mcp):
         ctx: Context = CurrentContext(),
     ) -> str:
         """
-        Ask both Gemini and Codex in PARALLEL, then synthesize responses.
+        Ask Gemini, Codex, and Copilot in PARALLEL, then synthesize responses.
         Returns individual responses plus a combined synthesis.
         Results are cached in session state for quick retrieval.
         """
@@ -129,7 +141,7 @@ def register_consensus_tools(mcp):
 
         # Check cache first
         if use_cache:
-            cached = await get_cached_result(ctx, prompt)
+            cached = await get_cached_result(ctx, prompt, model=gemini_model)
             if cached and isinstance(cached, SynthesisResult):
                 await safe_log(ctx, "Returning cached synthesis result")
                 await safe_progress(ctx, 100)
@@ -140,11 +152,12 @@ def register_consensus_tools(mcp):
         # Get parallel responses
         gemini_task = asyncio.create_task(call_gemini(prompt, gemini_model, ctx))
         codex_task = asyncio.create_task(call_codex(prompt, ctx))
+        copilot_task = asyncio.create_task(call_copilot(prompt, ctx))
 
         await safe_progress(ctx, 10)
 
-        gemini_response, codex_response = await asyncio.gather(
-            gemini_task, codex_task, return_exceptions=True
+        gemini_response, codex_response, copilot_response = await asyncio.gather(
+            gemini_task, codex_task, copilot_task, return_exceptions=True
         )
 
         await safe_progress(ctx, 50)
@@ -164,12 +177,19 @@ def register_consensus_tools(mcp):
                 success=False,
                 error=str(codex_response),
             )
+        if isinstance(copilot_response, Exception):
+            copilot_response = AIResponse(
+                provider="copilot",
+                response="",
+                success=False,
+                error=str(copilot_response),
+            )
 
         await safe_log(ctx, "Synthesizing responses...")
         await safe_progress(ctx, 60)
 
         # Ask Gemini to synthesize
-        synthesis_prompt = f"""İki farklı AI'dan aynı soru için yanıtlar aldım. Lütfen bunları karşılaştır ve sentezle:
+        synthesis_prompt = f"""Üç farklı AI'dan aynı soru için yanıtlar aldım. Lütfen bunları karşılaştır ve sentezle:
 
 SORU: {prompt}
 
@@ -178,6 +198,9 @@ GEMINI YANITI:
 
 CODEX YANITI:
 {codex_response.response if codex_response.success else f"Error: {codex_response.error}"}
+
+COPILOT YANITI:
+{copilot_response.response if copilot_response.success else f"Error: {copilot_response.error}"}
 
 Lütfen:
 1. Ortak noktaları belirt
@@ -192,11 +215,12 @@ Lütfen:
         result = SynthesisResult(
             gemini=gemini_response,
             codex=codex_response,
+            copilot=copilot_response,
             synthesis=synthesis_response,
         )
 
         # Cache the result
-        await cache_consensus_result(ctx, prompt, result)
+        await cache_consensus_result(ctx, prompt, result, model=gemini_model)
 
         await safe_progress(ctx, 100)
         await safe_log(ctx, "Synthesis completed and cached")
@@ -225,7 +249,9 @@ Lütfen:
         result_type = result["type"]
         data = result["data"]
 
-        if result_type == "synthesis":
+        if result_type == "council":
+            parsed = CouncilResult.model_validate(data)
+        elif result_type == "synthesis":
             parsed = SynthesisResult.model_validate(data)
         else:
             parsed = ConsensusResult.model_validate(data)
@@ -265,7 +291,7 @@ Lütfen:
         ctx: Context = CurrentContext(),
     ) -> str:
         """
-        Ask both Gemini and Codex in PARALLEL.
+        Ask Gemini, Codex, and Copilot in PARALLEL.
         If responses conflict, asks user which approach to prefer via elicitation.
         Returns the chosen response or synthesis based on user preference.
         """
@@ -275,11 +301,12 @@ Lütfen:
         # Get parallel responses
         gemini_task = asyncio.create_task(call_gemini(prompt, gemini_model, ctx))
         codex_task = asyncio.create_task(call_codex(prompt, ctx))
+        copilot_task = asyncio.create_task(call_copilot(prompt, ctx))
 
         await safe_progress(ctx, 10)
 
-        gemini_response, codex_response = await asyncio.gather(
-            gemini_task, codex_task, return_exceptions=True
+        gemini_response, codex_response, copilot_response = await asyncio.gather(
+            gemini_task, codex_task, copilot_task, return_exceptions=True
         )
 
         await safe_progress(ctx, 50)
@@ -299,54 +326,80 @@ Lütfen:
                 success=False,
                 error=str(codex_response),
             )
+        if isinstance(copilot_response, Exception):
+            copilot_response = AIResponse(
+                provider="copilot",
+                response="",
+                success=False,
+                error=str(copilot_response),
+            )
 
-        # If one failed, return the successful one
-        if not gemini_response.success and codex_response.success:
-            await safe_log(ctx, "Gemini failed, returning Codex response")
-            return f"**Codex Response (Gemini unavailable):**\n\n{codex_response.response}"
+        # Collect successful responses
+        successful = []
+        if gemini_response.success:
+            successful.append(("gemini", gemini_response))
+        if codex_response.success:
+            successful.append(("codex", codex_response))
+        if copilot_response.success:
+            successful.append(("copilot", copilot_response))
 
-        if gemini_response.success and not codex_response.success:
-            await safe_log(ctx, "Codex failed, returning Gemini response")
-            return f"**Gemini Response (Codex unavailable):**\n\n{gemini_response.response}"
+        if len(successful) == 0:
+            return (
+                f"All AIs failed:\n"
+                f"- Gemini: {gemini_response.error}\n"
+                f"- Codex: {codex_response.error}\n"
+                f"- Copilot: {copilot_response.error}"
+            )
 
-        if not gemini_response.success and not codex_response.success:
-            return f"Both AIs failed:\n- Gemini: {gemini_response.error}\n- Codex: {codex_response.error}"
+        if len(successful) == 1:
+            name, resp = successful[0]
+            failed_names = [n for n in ("gemini", "codex", "copilot") if n != name]
+            return f"**{name.capitalize()} Response ({', '.join(failed_names)} unavailable):**\n\n{resp.response}"
 
         await safe_progress(ctx, 60)
 
-        # Check for conflict using simple heuristic
-        # (responses differ significantly in length or content)
-        gemini_words = set(gemini_response.response.lower().split())
-        codex_words = set(codex_response.response.lower().split())
-        common_words = gemini_words & codex_words
-        all_words = gemini_words | codex_words
+        # Check for conflict using pairwise overlap
+        def _word_set(text: str) -> set[str]:
+            return set(text.lower().split())
 
-        # If less than 30% overlap, consider it a conflict
-        overlap_ratio = len(common_words) / len(all_words) if all_words else 1.0
-        has_conflict = overlap_ratio < 0.3
+        word_sets = {name: _word_set(resp.response) for name, resp in successful}
+        names = list(word_sets.keys())
+        overlap_ratios = []
+        for i in range(len(names)):
+            for j in range(i + 1, len(names)):
+                common = word_sets[names[i]] & word_sets[names[j]]
+                total = word_sets[names[i]] | word_sets[names[j]]
+                ratio = len(common) / len(total) if total else 1.0
+                overlap_ratios.append(ratio)
 
-        await safe_log(ctx, f"Response overlap: {overlap_ratio:.1%}, conflict: {has_conflict}")
+        min_overlap = min(overlap_ratios) if overlap_ratios else 1.0
+        has_conflict = min_overlap < 0.3
+
+        await safe_log(ctx, f"Min pairwise overlap: {min_overlap:.1%}, conflict: {has_conflict}")
 
         if has_conflict:
             await safe_progress(ctx, 70)
             await safe_log(ctx, "Conflict detected, asking user preference...")
 
-            # Try to elicit user preference
+            # Build summary for elicitation
+            summaries = []
+            for name, resp in successful:
+                summaries.append(f"**{name.capitalize()} özet:** {resp.response[:200]}...")
+
             try:
                 elicit_result = await ctx.elicit(
                     message=(
                         f"AI yanıtları arasında önemli farklılık tespit edildi.\n\n"
                         f"**Soru:** {prompt[:100]}...\n\n"
-                        f"**Gemini özet:** {gemini_response.response[:200]}...\n\n"
-                        f"**Codex özet:** {codex_response.response[:200]}...\n\n"
-                        f"Hangisini tercih edersiniz?"
+                        + "\n\n".join(summaries)
+                        + "\n\nHangisini tercih edersiniz?"
                     ),
                     schema={
                         "type": "object",
                         "properties": {
                             "preference": {
                                 "type": "string",
-                                "enum": ["gemini", "codex", "synthesis"],
+                                "enum": ["gemini", "codex", "copilot", "synthesis"],
                                 "description": "Tercih edilen yaklaşım"
                             }
                         },
@@ -359,13 +412,17 @@ Lütfen:
                 if elicit_result.action == "accept" and elicit_result.data:
                     preference = elicit_result.data.get("preference", "synthesis")
 
-                    if preference == "gemini":
+                    if preference == "gemini" and gemini_response.success:
                         await safe_log(ctx, "User chose Gemini")
                         return f"**Gemini Response (User Choice):**\n\n{gemini_response.response}"
 
-                    if preference == "codex":
+                    if preference == "codex" and codex_response.success:
                         await safe_log(ctx, "User chose Codex")
                         return f"**Codex Response (User Choice):**\n\n{codex_response.response}"
+
+                    if preference == "copilot" and copilot_response.success:
+                        await safe_log(ctx, "User chose Copilot")
+                        return f"**Copilot Response (User Choice):**\n\n{copilot_response.response}"
 
                 # Default to synthesis
                 await safe_log(ctx, "User chose synthesis or declined")
@@ -377,15 +434,18 @@ Lütfen:
         await safe_progress(ctx, 85)
         await safe_log(ctx, "Synthesizing responses...")
 
-        synthesis_prompt = f"""İki farklı AI'dan aynı soru için yanıtlar aldım. Lütfen bunları karşılaştır ve sentezle:
+        synthesis_prompt = f"""Üç farklı AI'dan aynı soru için yanıtlar aldım. Lütfen bunları karşılaştır ve sentezle:
 
 SORU: {prompt}
 
 GEMINI YANITI:
-{gemini_response.response}
+{gemini_response.response if gemini_response.success else f"Error: {gemini_response.error}"}
 
 CODEX YANITI:
-{codex_response.response}
+{codex_response.response if codex_response.success else f"Error: {codex_response.error}"}
+
+COPILOT YANITI:
+{copilot_response.response if copilot_response.success else f"Error: {copilot_response.error}"}
 
 Lütfen:
 1. Ortak noktaları belirt
@@ -398,9 +458,10 @@ Lütfen:
         result = SynthesisResult(
             gemini=gemini_response,
             codex=codex_response,
+            copilot=copilot_response,
             synthesis=synthesis_response,
         )
-        await cache_consensus_result(ctx, prompt, result)
+        await cache_consensus_result(ctx, prompt, result, model=gemini_model)
 
         await safe_progress(ctx, 100)
         await safe_log(ctx, "Consensus with elicitation completed")
